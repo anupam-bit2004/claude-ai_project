@@ -1,21 +1,12 @@
 import pytest
 import requests
 import mlflow
-import os
-import ssl
 
-# Bypass SSL verification for corporate proxy
-os.environ["PYTHONHTTPSVERIFY"] = "0"
-os.environ["CURL_CA_BUNDLE"] = ""
-os.environ["REQUESTS_CA_BUNDLE"] = ""
-try:
-    ssl._create_default_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
 from deepeval import assert_test
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import AnswerRelevancyMetric
 from deepeval.models import DeepEvalBaseLLM
+mlflow.set_experiment("Dell-Medical-Chatbot-Eval")
 
 # ---- Ollama Local Model Wrapper ----
 class OllamaModel(DeepEvalBaseLLM):
@@ -33,7 +24,7 @@ class OllamaModel(DeepEvalBaseLLM):
                 "prompt": prompt,
                 "stream": False
             },
-            timeout=120
+            timeout=300
         )
         return response.json()["response"]
 
@@ -44,7 +35,39 @@ class OllamaModel(DeepEvalBaseLLM):
         return self.model_name
 
 # ---- Initialize model ----
-ollama_model = OllamaModel(model_name="llama3")
+ollama_model = OllamaModel(model_name="mistral")
+
+@pytest.fixture
+def log_result():
+    def metric_logging(runval, test_case, metric):
+        with mlflow.start_run(run_name=runval):
+            try:
+                # Step 1: measure first — populates metric.score synchronously
+                metric.measure(test_case)
+                
+                # Step 2: score now exists — log immediately
+                score = metric.score
+                mlflow.log_metric("answer_relevancy", score if score is not None else 0.0)
+                mlflow.log_param("status", "completed" if score is not None else "TIMEOUT_CRITICAL")
+                
+                # Step 3: manually assert threshold
+                if score is not None and score < metric.threshold:
+                    raise AssertionError(
+                        f"Score {score} below threshold {metric.threshold}"
+                    )
+                    
+            except AssertionError as e:
+                print(f"Test FAILED: {e}")
+                raise
+                
+            except Exception as e:
+                # Catches timeout, connection errors, anything unexpected
+                print(f"Test ERROR: {type(e).__name__}: {e}")
+                mlflow.log_metric("answer_relevancy", 0.0)
+                mlflow.log_param("status", "TIMEOUT_CRITICAL")
+                raise
+                
+    return metric_logging
 
 # ---- Simulated chatbot responses ----
 def get_response(keyword):
@@ -56,7 +79,7 @@ def get_response(keyword):
     return responses.get(keyword, "I don't know")
 
 # ---- Test 1: Paracetamol relevancy ----
-def test_answer_relevancy():
+def test_answer_relevancy(log_result):
     metric = AnswerRelevancyMetric(
         threshold=0.99,
         model=ollama_model
@@ -67,24 +90,11 @@ def test_answer_relevancy():
     )
     #assert_test(test_case, [metric])
 
-    with mlflow.start_run(run_name="paracetamol_relevancy"): 
+    log_result("paracetamol_relevancy", test_case, metric)
 
-        try:
-            assert_test(test_case, [metric])
-        except (AssertionError, TimeoutError) as e:
-            print(f"Test failed with {type(e).__name__}")
-            print(metric.score)
-        finally:
-            if metric.score is not None:
-                mlflow.log_metric("answer_relevancy", metric.score)
-                mlflow.log_param("status", "completed")
-            else:
-                # Timeout = treat as a FAILURE signal, not absence of one
-                mlflow.log_metric("answer_relevancy", 0.0)  # or some sentinel
-                mlflow.log_param("status", "TIMEOUT_CRITICAL")    
 
 # ---- Test 2: Diabetes relevancy ----
-def test_diabetes_relevancy():
+def test_diabetes_relevancy(log_result):
     metric = AnswerRelevancyMetric(
         threshold=0.5,
         model=ollama_model
@@ -93,4 +103,9 @@ def test_diabetes_relevancy():
         input="What are the symptoms of diabetes?",
         actual_output=get_response("diabetes")
     )
-    assert_test(test_case, [metric])
+    #assert_test(test_case, [metric])
+
+    log_result("diabetes_relevancy", test_case, metric)
+
+
+
