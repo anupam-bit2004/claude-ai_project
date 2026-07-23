@@ -1,0 +1,9 @@
+ai_testing_env/
+mlflow.db
+mlflow/
+drift_report.html
+.deepeval/
+__pycache__/
+*.pyc
+.env
+*.db
