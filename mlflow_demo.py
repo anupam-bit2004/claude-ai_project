@@ -19,4 +19,9 @@ with mlflow.start_run(run_name="mistral-run-2-degraded"):
     mlflow.log_metric("answer_relevancy", 0.72)  # dropped!
     mlflow.log_metric("hallucination", 0.25)  # increased!
 
+<<<<<<< HEAD
 print("✅ Done! Run 'mlflow ui' to view results")
+=======
+print("✅ Done! Run 'mlflow ui' to view results")
+
+>>>>>>> fe85f3779a09903a807811f8f0b1b9b5aa78bde7
